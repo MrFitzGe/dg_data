@@ -36,7 +36,7 @@ uv sync
 
 3. Run the application:
 ```bash
-uv run marimo run main.py
+uv run marimo run dg_analysis_nb.py
 ```
 
 4. Open your browser to the URL shown in the terminal (typically `http://localhost:2718`)
@@ -79,8 +79,8 @@ Your CSV file should follow this format:
 ### Project Structure
 ```
 dg-data/
-├── main.py              # Main marimo notebook application
-├── pyproject.toml       # Project dependencies and metadata
+├── dg_analysis_nb.py   # Main marimo notebook application
+├── pyproject.toml      # Project dependencies and metadata
 ├── uv.lock             # Locked dependency versions
 ├── Data/               # Sample data files
 │   ├── Glow Standings.csv
@@ -99,7 +99,7 @@ dg-data/
 
 ### Adding New Features
 The application is built as a marimo notebook, making it easy to modify:
-1. Edit `main.py` directly or run `marimo edit main.py` for the notebook interface
+1. Edit `dg_analysis_nb.py` directly or run `marimo edit dg_analysis_nb.py` for the notebook interface
 2. Add new cells for additional analysis or visualizations
 3. Use marimo's reactive features to create interactive elements
 
@@ -112,7 +112,7 @@ The `Data/` directory contains example CSV files you can use for testing:
 
 ### Local Development
 ```bash
-uv run marimo run main.py
+uv run marimo run dg_analysis_nb.py
 ```
 
 ### Production Deployment
