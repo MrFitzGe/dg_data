@@ -50,7 +50,7 @@ def read_preproc_data(csv_file):
         for file_info in csv_file.value:
             df = pl.read_csv(file_info.contents, try_parse_dates=True)
             dfs.append(df)
-    
+
         # Concatenate all dataframes vertically
         df_clean = pl.concat(dfs)
     else:
@@ -72,22 +72,22 @@ def clean_data(df_clean):
     # clean the date times
     def clean_date_duration(df: pl.DataFrame | pl.LazyFrame, start_col: str = "StartDate", end_col: str ="EndDate") -> pl.DataFrame | pl.LazyFrame:
         return df.with_columns(
-            pl.col(start_col).cast(pl.Date).alias("RoundDate"),
-            (pl.col(end_col) - pl.col(start_col)).dt.cast_time_unit("ms").alias("RoundDurationMin")
+            pl.col(start_col).cast(pl.Date).alias("Date"),
+            (pl.col(end_col) - pl.col(start_col)).dt.total_minutes().alias("RoundDuration")
         ).drop(start_col, end_col)
 
     # Clean the dataframe with proper null handling and do some basic long formatting
-    df_long = (
+    df_preprocessed = (
         clean_date_duration(df_clean)
         .rename({"+/-":"Score"})
-        .filter(
-            pl.col("Score").is_not_null()
-        )
         .with_columns(
             Attendance = pl.len().over("PlayerName")
         )
     )
-    return (df_long,)
+    df_long = df_preprocessed.filter(
+            pl.col("Score").is_not_null()
+        )
+    return df_long, df_preprocessed
 
 
 @app.cell(hide_code=True)
@@ -408,24 +408,75 @@ def _(relative_chart):
 
 
 @app.cell
+def _(df_preprocessed):
+    # Get hole-by-hole data
+    by_hole_df = (
+        df_preprocessed
+        .unpivot(
+            index="PlayerName",
+            on=cs.starts_with("Hole"),
+            value_name="ShotsThrown",
+            variable_name="Hole#" 
+        ).with_columns(
+            pl.col("Hole#").str.replace("Hole", "").cast(pl.Int16)
+        )
+    )
+    # Separate par data and player data
+    par_data = by_hole_df.filter(pl.col("PlayerName") == "Par")
+    player_data = by_hole_df.filter(pl.col("PlayerName") != "Par")
+
+    # Join player scores with par for each hole
+    hole_analysis = ( 
+        player_data
+        .join(
+            par_data.select(["Hole#", "ShotsThrown"]).rename({"ShotsThrown": "Par"}),
+            on="Hole#",
+            how="left"
+        ).with_columns([
+            (pl.col("ShotsThrown") - pl.col("Par")).alias("Score_vs_Par")
+        ])
+        .sort("Hole#")
+    )
+    # Calculate hole difficulty statistics
+    hole_difficulty = ( 
+        hole_analysis
+        .group_by("Hole#")
+        .agg([
+            pl.mean("Score_vs_Par").alias("Avg_Score_vs_Par"),
+            pl.count("PlayerName").alias("Total_Players"),
+            pl.max("Score_vs_Par").alias("Worst_Score_vs_Par"),
+            pl.min("Score_vs_Par").alias("Best_Score_vs_Par"),
+            pl.std("Score_vs_Par").alias("Std_Dev")
+        ])
+        .with_columns(cs.numeric().round(2))
+        .sort("Avg_Score_vs_Par")
+    )
+    mo.vstack([
+        mo.md("## Hole Difficulty Analysis"),
+        mo.ui.dataframe(hole_difficulty)
+    ])
+    return by_hole_df, hole_analysis, hole_difficulty
+
+
+@app.cell
 def _(hole_analysis):
     # Calculate each player's performance on each hole relative to par
-    player_hole_performance = hole_analysis.group_by(["PlayerName", "Hole"]).agg([
+    player_hole_performance = hole_analysis.group_by(["PlayerName", "Hole#"]).agg([
         pl.mean("Score_vs_Par").alias("Avg_Score_vs_Par"),
-        pl.count("Score").alias("Rounds_Played"),
+        pl.count("ShotsThrown").alias("Rounds_Played"),
         pl.min("Score_vs_Par").alias("Best_Score_vs_Par"),
         pl.max("Score_vs_Par").alias("Worst_Score_vs_Par")
-    ]).sort(["PlayerName", "Hole"])
+    ]).sort(["PlayerName", "Hole#"])
 
     # Find best and worst holes for each player
     player_best_holes = player_hole_performance.group_by("PlayerName").agg([
         pl.min("Avg_Score_vs_Par").alias("Best_Hole_Performance"),
-        pl.first("Hole").filter(pl.col("Avg_Score_vs_Par") == pl.min("Avg_Score_vs_Par")).alias("Best_Hole")
+        pl.col("Hole#").filter(pl.col("Avg_Score_vs_Par") == pl.min("Avg_Score_vs_Par")).alias("Best_Hole")
     ])
 
     player_worst_holes = player_hole_performance.group_by("PlayerName").agg([
         pl.max("Avg_Score_vs_Par").alias("Worst_Hole_Performance"),
-        pl.first("Hole").filter(pl.col("Avg_Score_vs_Par") == pl.max("Avg_Score_vs_Par")).alias("Worst_Hole")
+        pl.col("Hole#").filter(pl.col("Avg_Score_vs_Par") == pl.max("Avg_Score_vs_Par")).alias("Worst_Hole")
     ])
 
     # Combine best and worst hole analysis
@@ -445,34 +496,9 @@ def _(hole_analysis):
 
 
 @app.cell
-def _(df_clean):
-    # Separate par data and player data
-    par_data = df_clean.filter(pl.col("PlayerName") == "PAR")
-    player_data = df_clean.filter(pl.col("PlayerName") != "PAR")
-
-    # Join player scores with par for each hole
-    hole_analysis = player_data.join(
-        par_data.select(["Hole", "Score"]).rename({"Score": "Par"}),
-        on="Hole",
-        how="left"
-    ).with_columns([
-        (pl.col("Score") - pl.col("Par")).alias("Score_vs_Par")
-    ])
-
-    # Calculate hole difficulty statistics
-    hole_difficulty = hole_analysis.group_by("Hole").agg([
-        pl.mean("Score_vs_Par").alias("Avg_Score_vs_Par"),
-        pl.count("PlayerName").alias("Total_Players"),
-        pl.max("Score_vs_Par").alias("Worst_Score_vs_Par"),
-        pl.min("Score_vs_Par").alias("Best_Score_vs_Par"),
-        pl.std("Score_vs_Par").alias("Std_Dev")
-    ]).sort("Avg_Score_vs_Par")
-
-    mo.vstack([
-        mo.md("## Hole Difficulty Analysis"),
-        mo.ui.dataframe(hole_difficulty)
-    ])
-    return hole_analysis, hole_difficulty
+def _(by_hole_df):
+    by_hole_df
+    return
 
 
 @app.cell
@@ -482,13 +508,13 @@ def _(hole_difficulty):
         alt.Chart(hole_difficulty)
         .mark_bar()
         .encode(
-            x=alt.X("Hole:N", title="Hole Number", sort=alt.SortField("Avg_Score_vs_Par")),
+            x=alt.X("Hole#:N", title="Hole Number", sort=alt.SortField("Avg_Score_vs_Par")),
             y=alt.Y("Avg_Score_vs_Par:Q", title="Average Score vs Par"),
             color=alt.Color("Avg_Score_vs_Par:Q", 
-                           scale=alt.Scale(scheme="redyellowgreen", domain=[-1, 2]),
+                           scale=alt.Scale(scheme="redyellowgreen", domain=[-1, 2], reverse=True),
                            title="Difficulty"),
             tooltip=[
-                "Hole:N",
+                "Hole#:N",
                 alt.Tooltip("Avg_Score_vs_Par:Q", title="Avg Score vs Par"),
                 alt.Tooltip("Best_Score_vs_Par:Q", title="Best Score vs Par"),
                 alt.Tooltip("Worst_Score_vs_Par:Q", title="Worst Score vs Par"),
@@ -496,8 +522,8 @@ def _(hole_difficulty):
             ]
         )
         .properties(
-            title="Hole Difficulty Analysis (Easiest to Hardest)",
-            width=800,
+            title="Hole Difficulty (Easiest to Hardest)",
+            width=700,
             height=400
         )
     )
@@ -515,21 +541,21 @@ def _(player_hole_performance):
         alt.Chart(heatmap_data)
         .mark_rect()
         .encode(
-            x=alt.X("Hole:N", title="Hole Number"),
+            x=alt.X("Hole#:N", title="Hole Number"),
             y=alt.Y("PlayerName:N", title="PlayerName"),
             color=alt.Color("Avg_Score_vs_Par:Q", 
-                           scale=alt.Scale(scheme="redyellowgreen", domain=[-2, 3]),
+                           scale=alt.Scale(scheme="redyellowgreen", domain=[-2, 3], reverse=True),
                            title="Avg Score vs Par"),
             tooltip=[
                 "PlayerName:N",
-                "Hole:N",
+                "Hole#:N",
                 alt.Tooltip("Avg_Score_vs_Par:Q", title="Avg Score vs Par"),
                 alt.Tooltip("Rounds_Played:Q", title="Rounds Played")
             ]
         )
         .properties(
             title="Player Performance by Hole (Heatmap)",
-            width=800,
+            width=700,
             height=400
         )
     )
