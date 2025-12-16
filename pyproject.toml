@@ -9,5 +9,6 @@ dependencies = [
     "loguru>=0.7.3",
     "marimo>=0.18.4",
     "numpy>=2.3.5",
+    "openai>=2.12.0",
     "polars>=1.36.1",
 ]
