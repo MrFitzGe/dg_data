@@ -38,6 +38,8 @@ def upload_data_files():
 
 @app.cell(hide_code=True)
 def read_preproc_data(csv_file):
+    mo.stop(len(csv_file.value) == 0, mo.md("Enter data to analyze"))
+
     # Process uploaded data
     # Transform the data into long format for time series analysis
     static_cols = ["PlayerName", "CourseName", "LayoutName", "StartDate", "EndDate"]
@@ -95,38 +97,60 @@ def _(df_long):
     # Player selector for detailed charts
     players = mo.ui.multiselect(
         options=df_long['PlayerName'].unique(),  # Will be replaced dynamically
-        label="Select Player(s) to Highlight:",
+        label="Select Player(s):",
         value=df_long['PlayerName'].unique(),
     )
-    players
-    return (players,)
+
+    courses = mo.ui.multiselect(
+        options=df_long['CourseName'].unique(),  # Will be replaced dynamically
+        label="Select Course(s):",
+        value=df_long['CourseName'].unique(),
+    )
+
+    layouts = mo.ui.multiselect(
+        options=df_long['LayoutName'].unique(),  # Will be replaced dynamically
+        label="Select Layout(s):",
+        value=df_long['LayoutName'].unique(),
+    )
+
+    mo.hstack([players, courses, layouts])
+    return courses, layouts, players
 
 
 @app.cell(hide_code=True)
-def _(players):
-    mo.vstack([
-        mo.md("Selected Players"),
-        players.value
+def _(courses, layouts, players):
+    mo.hstack([
+        mo.vstack([
+            mo.md("Selected Players"),
+            players.value
+        ]), 
+        mo.vstack([
+            mo.md("Selected Courses"),
+            courses.value
+        ]),
+        mo.vstack([
+            mo.md("Selected Layouts"),
+            layouts.value
+        ]),
     ])
+
     return
 
 
 @app.cell
-def _(df_long, players):
-    # Create detail chart highlighting selected players
-    selected_players = players.value
+def filter_data(courses, df_long, layouts, players):
+    # Create detail chart highlighting selected players, courses, and layouts
 
     # Filter data
-    filtered_df = df_long.filter(pl.col("PlayerName").is_in(selected_players))
+    filtered_df = df_long.filter(
+        pl.col("PlayerName").is_in(players.value),
+        pl.col("CourseName").is_in(courses.value), 
+        pl.col("LayoutName").is_in(layouts.value)
+    )
 
     # Base chart
     base = alt.Chart(filtered_df).encode(
         x=alt.X("Date:T", title="Date")
-    )
-
-    # Highlight area for selected player(s)
-    area = base.mark_area(opacity=0.3).encode(
-        y=alt.Y("Score:Q", title="Score (Relative to Par)"), color="PlayerName:N"
     )
 
     # Line for scores
@@ -139,7 +163,7 @@ def _(df_long, players):
 
 
 @app.cell
-def _(df_with_stats, lines):
+def time_series_plot(df_with_stats, lines):
     # Time series line chart showing scores over time
     line_chart = (
         alt.Chart(df_with_stats)
@@ -170,164 +194,16 @@ def _(df_with_stats, lines):
             'Player Scores Over Time with Averages',
             subtitle='Solid lines show individual performance, dashed lines show player averages'
         ),
-        width=750, height=500
+        width=800, height=500
     )
     return (line_chart,)
-
-
-@app.cell
-def _(df_long, player_stats):
-    # Attendance bar chart
-    global_avg = round(df_long['Attendance'].mean(), 2)
-
-    rule = alt.Chart().mark_rule(
-        color="white",
-        size=3
-    ).encode(
-        x=alt.X(datum=global_avg)
-    )
-
-    label = rule.mark_text(
-        x="width",
-        dx=4,
-        align="left",
-        baseline="bottom",
-        text=f"Avg Attendance = {global_avg}", 
-        color="white"
-    )
-
-    player_attendance = (
-        alt.Chart(player_stats)
-        .mark_bar()
-        .encode(
-            y=alt.Y("PlayerName:N", sort="-x", title="Player Name"),
-            x=alt.X("Rounds Played:Q", title="Number of Rounds"),
-            color="Rounds Played:Q",
-            tooltip=["PlayerName:N", "Rounds Played:Q"],
-        )
-    )
-
-    attend_chart = (player_attendance + rule + label).properties(title="League Attendance", width=750, height=300)
-    return (attend_chart,)
-
-
-@app.cell
-def _(filtered_df):
-    # Score distribution plots
-    ## Bar with point layered on top
-
-    mean_points = (
-        alt.Chart(filtered_df)
-        .mark_point(filled=True, size=60)
-        .encode(
-            y=alt.Y(
-                "PlayerName:N", 
-                sort=alt.EncodingSortField(
-                 field='Score',
-                 op='mean',
-                 order='ascending'
-                ),
-                title="Player Name"
-            ),
-            x=alt.X(
-                "Score:Q",
-                aggregate="mean",
-                title="Average Score (Relative to Par)"
-            ),
-            color=alt.Color(
-                "mean(Score):Q",
-                scale=alt.Scale(scheme="redblue", reverse=True),
-                title="Avg Score"
-            ),
-            tooltip=[
-                "PlayerName:N",
-                alt.Tooltip("mean(Score):Q", title="Avg Score"),
-                alt.Tooltip("stdev(Score):Q", title="Std Dev")
-            ],
-        )
-    )
-
-    bar = alt.Chart(filtered_df).mark_bar(cornerRadius=8, height=7).encode(
-        x=alt.X('min(Score):Q', scale=alt.Scale(domain=[-18, 40]), title='Score (Relative to Par)'),
-        x2='max(Score):Q',
-        y=alt.Y(
-            "PlayerName:N", 
-            sort=alt.EncodingSortField(
-                 field='Score',
-                 op='mean',
-                 order='ascending'
-             ),
-            title="Player Name"
-        ),
-    )
-
-    text_min = alt.Chart(filtered_df).mark_text(align='right', color="white", dx=-5).encode(
-        x='min(Score):Q',
-        y=alt.Y(
-            "PlayerName:N", 
-            sort=alt.EncodingSortField(
-                 field='Score',
-                 op='mean',
-                 order='ascending'
-             ),
-            title="Player Name"
-        ),
-        text='min(Score):Q'
-    )
-
-    text_max = alt.Chart(filtered_df).mark_text(align='left', color="grey", dx=5).encode(
-        x='max(Score):Q',
-        y=alt.Y(
-            "PlayerName:N", 
-            sort=alt.EncodingSortField(
-                 field='Score',
-                 op='mean',
-                 order='ascending'
-             ),
-            title="Player Name"
-        ),
-        text='max(Score):Q'
-    )
-
-    avg_score_bars = (bar + text_min + text_max + mean_points).properties(
-        title=alt.Title(text='Avg, min, max Score by Player', 
-        subtitle='Scores relative to Par'),
-        width=750,
-        height=300
-    )
-    return (avg_score_bars,)
-
-
-@app.cell
-def _(df_with_stats):
-
-    # Relative performance chart
-    relative_chart = (
-        alt.Chart(df_with_stats)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("Date:T", title="Date"),
-            y=alt.Y(
-                "Relative Score to Player Avg:Q",
-                title="Performance (Relative to Player Average)",
-            ),
-            color="PlayerName:N",
-            tooltip=["PlayerName", "Date:T", "Relative Score to Player Avg:Q", "Score:Q", "Avg Score:Q", "Std Dev:Q"],
-        )
-        .properties(
-            title="Performance Relative to Player Average",
-            width=700,
-            height=400,
-        )
-    )
-    return (relative_chart,)
 
 
 @app.cell(hide_code=True)
 def _():
     # Summary statistics section
     mo.md("""
-    ## Statistics
+    ## Data & Statistics
 
     Key metrics about the league performance:
     - Date: the day the round was scored
@@ -371,40 +247,202 @@ def _(filtered_df):
 
 
 @app.cell
-def _(attend_chart, avg_score_bars):
-    # Output all visualizations
+def _(
+    by_hole_stats,
+    perf_over_time_plots,
+    player_stats_by_hole,
+    score_attend_plots,
+):
+    tabs = mo.ui.tabs({
+        "League Ranks: Score & Attendance": score_attend_plots,
+        "Player Performance over Time": perf_over_time_plots,
+        "Hole-by-Hole Analysis": mo.vstack([by_hole_stats, mo.md("-------------"), player_stats_by_hole])
+    })
+
     mo.vstack([
+        mo.md("## Analysis"), 
+        tabs
+    ])
+    return
+
+
+@app.cell
+def score_distro_plot(filtered_df):
+    # Score distribution plots
+    ## Bar with point layered on top
+
+    _mean_points = (
+        alt.Chart(filtered_df)
+        .mark_point(filled=True, size=80)
+        .encode(
+            y=alt.Y(
+                "PlayerName:N", 
+                sort=alt.EncodingSortField(
+                 field='Score',
+                 op='mean',
+                 order='ascending'
+                ),
+                title="Player Name"
+            ),
+            x=alt.X(
+                "Score:Q",
+                aggregate="mean",
+                title="Average Score (Relative to Par)"
+            ),
+            color=alt.Color(
+                "mean(Score):Q",
+                scale=alt.Scale(scheme="redyellowgreen", reverse=True),
+                title="Avg Score"
+            ),
+            tooltip=[
+                "PlayerName:N",
+                alt.Tooltip("mean(Score):Q", title="Avg Score"),
+                alt.Tooltip("stdev(Score):Q", title="Std Dev")
+            ],
+        )
+    )
+
+    _bar = alt.Chart(filtered_df).mark_bar(cornerRadius=8, height=7).encode(
+        x=alt.X('min(Score):Q', scale=alt.Scale(domain=[-18, 40], scheme="redyellowgreen"), title='Score (Relative to Par)'),
+        x2='max(Score):Q',
+        y=alt.Y(
+            "PlayerName:N", 
+            sort=alt.EncodingSortField(
+                 field='Score',
+                 op='mean',
+                 order='ascending'
+             ),
+            title="Player Name"
+        ),
+    )
+
+    _text_min = alt.Chart(filtered_df).mark_text(align='right', color="white", dx=-5).encode(
+        x='min(Score):Q',
+        y=alt.Y(
+            "PlayerName:N", 
+            sort=alt.EncodingSortField(
+                 field='Score',
+                 op='mean',
+                 order='ascending'
+             ),
+            title="Player Name"
+        ),
+        text='min(Score):Q'
+    )
+
+    _text_max = alt.Chart(filtered_df).mark_text(align='left', color="grey", dx=5).encode(
+        x='max(Score):Q',
+        y=alt.Y(
+            "PlayerName:N", 
+            sort=alt.EncodingSortField(
+                 field='Score',
+                 op='mean',
+                 order='ascending'
+             ),
+            title="Player Name"
+        ),
+        text='max(Score):Q'
+    )
+
+    avg_score_bars = (_bar + _text_min + _text_max + _mean_points).properties(
+        title=alt.Title(text='Lowest, Avg, & Highest Round Score by Player', 
+        subtitle='Scores relative to Par'),
+        width=800,
+        height=400
+    )
+    return (avg_score_bars,)
+
+
+@app.cell
+def _(df_long, player_stats):
+    # Attendance bar chart
+    global_avg = round(df_long['Attendance'].mean(), 2)
+
+    rule = alt.Chart().mark_rule(
+        color="white",
+        size=3
+    ).encode(
+        x=alt.X(datum=global_avg)
+    )
+
+    label = rule.mark_text(
+        x="width",
+        dx=4,
+        align="left",
+        baseline="bottom",
+        text=f"Avg Attendance = {global_avg}", 
+        color="white"
+    )
+
+    player_attendance = (
+        alt.Chart(player_stats)
+        .mark_bar()
+        .encode(
+            y=alt.Y("PlayerName:N", sort="-x", title="Player Name"),
+            x=alt.X("Rounds Played:Q", scale=alt.Scale(round=True), title="Number of Rounds"),
+            color="Rounds Played:Q",
+            tooltip=["PlayerName:N", "Rounds Played:Q"],
+        )
+    )
+
+    attend_chart = (player_attendance + rule + label).properties(title="League Attendance", width=800, height=400)
+    return (attend_chart,)
+
+
+@app.cell
+def _(attend_chart, avg_score_bars):
+    score_attend_plots = mo.vstack([
         mo.md("""
     ## Score & Attendance
     """), 
         mo.ui.altair_chart(avg_score_bars),
+        mo.md("---------------------"),
         mo.ui.altair_chart(attend_chart)
     ])
-    return
+    return (score_attend_plots,)
 
 
 @app.cell
-def _(line_chart):
-    mo.vstack([
+def _(line_chart, relative_chart):
+    perf_over_time_plots = mo.vstack([
         mo.md("""
         ## Performance Over Time
         Track how players performed in each round.
         """),
-        mo.ui.altair_chart(line_chart)
-    ])
-    return
-
-
-@app.cell
-def _(relative_chart):
-    mo.vstack([
+        mo.ui.altair_chart(line_chart), 
+        mo.md("------------------"),
         mo.md("""### Relative Performance
-        Shows how players performed compared to their personal averages over time.<br>
-        Ideally, this should trend downwards as you improve.
+        Shows how players performed compared to their personal average score each round.<br>
+        Each player's average is 0. Each round is scored relative to their average.<br>
+        Ideally, this should trend downwards as you improve over time.
         """),
         mo.ui.altair_chart(relative_chart),
     ])
-    return
+    return (perf_over_time_plots,)
+
+
+@app.cell
+def _(df_with_stats):
+    # Relative performance chart
+    relative_chart = (
+        alt.Chart(df_with_stats)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X("Date:T", title="Date"),
+            y=alt.Y(
+                "Relative Score to Player Avg:Q",
+                title="Performance (Relative to Player Average)",
+            ),
+            color="PlayerName:N",
+            tooltip=["PlayerName", "Date:T", "Relative Score to Player Avg:Q", "Score:Q", "Avg Score:Q", "Std Dev:Q"],
+        )
+        .properties(
+            title="Performance Relative to Player Average",
+            width=800,
+            height=400,
+        )
+    )
+    return (relative_chart,)
 
 
 @app.cell
@@ -451,11 +489,54 @@ def _(df_preprocessed):
         .with_columns(cs.numeric().round(2))
         .sort("Avg_Score_vs_Par")
     )
-    mo.vstack([
+
+    # Create hole difficulty visualization
+    _mean_points = (
+        alt.Chart(hole_difficulty)
+        .mark_point(filled=True, size=80)
+        .encode(
+            y=alt.Y("Hole#:N", title="Hole Number", sort=alt.SortField("Avg_Score_vs_Par")),
+            x=alt.X("Avg_Score_vs_Par:Q", title="Average Score vs Par"),
+            color=alt.Color("Avg_Score_vs_Par:Q", 
+                           scale=alt.Scale(scheme="redyellowgreen", domain=[-2, 2], reverse=True),
+                           title="Difficulty"),
+            tooltip=[
+                "Hole#:N",
+                alt.Tooltip("Avg_Score_vs_Par:Q", title="Avg Score vs Par"),
+                alt.Tooltip("Best_Score_vs_Par:Q", title="Best Score vs Par"),
+                alt.Tooltip("Worst_Score_vs_Par:Q", title="Worst Score vs Par"),
+                "Total_Players:Q"
+            ]
+        )
+    )
+
+    _error_bars = alt.Chart(hole_analysis).mark_errorbar(color="grey", opacity=0.8, ticks=True).encode(
+      x=alt.X('Score_vs_Par:Q', scale=alt.Scale(zero=False)),
+      y=alt.Y(
+          "Hole#:N", 
+            sort=alt.EncodingSortField(
+                 field='Avg_Score_vs_Par',
+                 order='ascending'
+             ),
+            title="Hole Number"
+        ),
+    )
+
+    hole_chart = (_error_bars + _mean_points).properties(
+        title=alt.Title(text='Hole Difficulty (Easiest to Hardest)', 
+        subtitle='Scores relative to Par'),
+        width=800,
+        height=400
+    )
+
+
+    # Output
+    by_hole_stats = mo.vstack([
         mo.md("## Hole Difficulty Analysis"),
-        mo.ui.dataframe(hole_difficulty)
+        hole_difficulty, 
+        hole_chart
     ])
-    return by_hole_df, hole_analysis, hole_difficulty
+    return by_hole_stats, hole_analysis
 
 
 @app.cell
@@ -471,12 +552,12 @@ def _(hole_analysis):
     # Find best and worst holes for each player
     player_best_holes = player_hole_performance.group_by("PlayerName").agg([
         pl.min("Avg_Score_vs_Par").alias("Best_Hole_Performance"),
-        pl.col("Hole#").filter(pl.col("Avg_Score_vs_Par") == pl.min("Avg_Score_vs_Par")).alias("Best_Hole")
+        pl.col("Hole#").filter(pl.col("Avg_Score_vs_Par") == pl.min("Avg_Score_vs_Par")).alias("Best_Holes")
     ])
 
     player_worst_holes = player_hole_performance.group_by("PlayerName").agg([
         pl.max("Avg_Score_vs_Par").alias("Worst_Hole_Performance"),
-        pl.col("Hole#").filter(pl.col("Avg_Score_vs_Par") == pl.max("Avg_Score_vs_Par")).alias("Worst_Hole")
+        pl.col("Hole#").filter(pl.col("Avg_Score_vs_Par") == pl.max("Avg_Score_vs_Par")).alias("Nemesis_Holes")
     ])
 
     # Combine best and worst hole analysis
@@ -488,52 +569,6 @@ def _(hole_analysis):
         cs.numeric().round(2)
     ])
 
-    mo.vstack([
-        mo.md("## Player Best & Worst Holes"),
-        mo.ui.dataframe(player_extremes)
-    ])
-    return (player_hole_performance,)
-
-
-@app.cell
-def _(by_hole_df):
-    by_hole_df
-    return
-
-
-@app.cell
-def _(hole_difficulty):
-    # Create hole difficulty visualization
-    hole_chart = (
-        alt.Chart(hole_difficulty)
-        .mark_bar()
-        .encode(
-            x=alt.X("Hole#:N", title="Hole Number", sort=alt.SortField("Avg_Score_vs_Par")),
-            y=alt.Y("Avg_Score_vs_Par:Q", title="Average Score vs Par"),
-            color=alt.Color("Avg_Score_vs_Par:Q", 
-                           scale=alt.Scale(scheme="redyellowgreen", domain=[-1, 2], reverse=True),
-                           title="Difficulty"),
-            tooltip=[
-                "Hole#:N",
-                alt.Tooltip("Avg_Score_vs_Par:Q", title="Avg Score vs Par"),
-                alt.Tooltip("Best_Score_vs_Par:Q", title="Best Score vs Par"),
-                alt.Tooltip("Worst_Score_vs_Par:Q", title="Worst Score vs Par"),
-                "Total_Players:Q"
-            ]
-        )
-        .properties(
-            title="Hole Difficulty (Easiest to Hardest)",
-            width=700,
-            height=400
-        )
-    )
-
-    hole_chart
-    return
-
-
-@app.cell
-def _(player_hole_performance):
     # Create heatmap of player performance by hole
     heatmap_data = player_hole_performance.filter(pl.col("Rounds_Played") >= 1)  # Only holes with data
 
@@ -555,13 +590,17 @@ def _(player_hole_performance):
         )
         .properties(
             title="Player Performance by Hole (Heatmap)",
-            width=700,
+            width=800,
             height=400
         )
     )
 
-    player_heatmap
-    return
+    player_stats_by_hole = mo.vstack([
+        mo.md("## Each Player's Best & Nemesis Holes"),
+        player_extremes,
+        player_heatmap
+    ])
+    return (player_stats_by_hole,)
 
 
 if __name__ == "__main__":
