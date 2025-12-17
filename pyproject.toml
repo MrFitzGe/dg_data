@@ -1,7 +1,7 @@
 [project]
 name = "dg-data"
-version = "0.2.0"
-description = "Notebook / Web App for analysisd of disc golf rounds"
+version = "1.0.0"
+description = "Notebook / Web App for analysis of disc golf rounds"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
