@@ -10,7 +10,6 @@ with app.setup:
     import altair as alt
     import numpy as np
     from datetime import datetime
-    from loguru import logger
 
 
 @app.cell(hide_code=True)
@@ -57,7 +56,8 @@ def read_preproc_data(csv_file):
         # Concatenate all dataframes vertically
         df_clean = pl.concat(dfs)
     else:
-        logger.error("File upload format not recognized. Please check your .csv file.")
+        mo.stop("File upload format not recognized. Please check your .csv file.")
+    
 
     mo.vstack([
         mo.md("Data Used"),
@@ -67,17 +67,12 @@ def read_preproc_data(csv_file):
 
 
 @app.cell
-def _():
-    return
-
-
-@app.cell
 def clean_data(csv_file, df_clean):
     mo.stop(len(csv_file.value) == 0)
 
     # check data is comparable Course and layout
     if df_clean["CourseName"].n_unique() > 1 or df_clean["LayoutName"].n_unique() > 1:
-        logger.warning("Course or Layout differ in the data set! Results may not be fair comparison.")
+        print("Course or Layout differ in the data set! Results may not be fair comparison.")
 
     # clean the date times
     def clean_date_duration(df: pl.DataFrame | pl.LazyFrame, start_col: str = "StartDate", end_col: str ="EndDate") -> pl.DataFrame | pl.LazyFrame:
@@ -156,56 +151,21 @@ def filter_data(courses, df_long, layouts, players):
 
 
 @app.cell
-def base_chart(filtered_df):
-    # Create chart base
+def base_chart():
+    # Create chart base theme
     alt.theme.enable('urbaninstitute')
 
-    # Base chart
-    base = alt.Chart(filtered_df).encode(
-        x=alt.X(
-            "Date:T",
-            title="Date",
-            axis=alt.Axis(
-                format="%b %d, %Y",
-                labelAngle=-45,
-                labelFontSize=11
-            )
+    # Resuable chart components
+    date_axis=alt.X(
+        "Date:T",
+        title="Date",
+        axis=alt.Axis(
+            format="%b %d, %Y",
+            labelAngle=-45,
+            labelFontSize=11
         )
     )
-    return (base,)
-
-
-@app.cell
-def time_series_plot(base, df_with_stats):
-    # Time series line chart showing scores over time
-    # Line for scores
-    lines = base.mark_line(point=True).encode(
-        y=alt.Y("Score:Q", title="Score (Relative to Par)"),
-        color="PlayerName:N",
-        tooltip=["PlayerName", "Date:T", "Score:Q"],
-    )
-
-    # Add average score lines
-    avg_lines = (
-        alt.Chart(df_with_stats)
-        .mark_rule(strokeDash=[5, 5], opacity=0.3)
-        .encode(
-            y=alt.Y('Avg Score:Q', title='Score (Relative to Par)'),
-            color="PlayerName:N",
-            tooltip=["PlayerName:N", 'Avg Score:Q', "Rounds Played:N"]
-        )
-    )
-
-    line_chart = (lines + avg_lines).resolve_scale(
-        y='shared'
-    ).properties(
-        title=alt.TitleParams(
-            'Player Scores Over Time with Averages',
-            subtitle='Solid lines show individual performance, dashed lines show player averages'
-        ),
-        width=800, height=500
-    )
-    return (line_chart,)
+    return (date_axis,)
 
 
 @app.cell(hide_code=True)
@@ -366,14 +326,14 @@ def _(df_long, player_stats):
     # Attendance bar chart
     global_avg = round(df_long['Attendance'].mean(), 2)
 
-    rule = alt.Chart().mark_rule(
+    _rule = alt.Chart().mark_rule(
         color="black",
         size=3
     ).encode(
         x=alt.X(datum=global_avg)
     )
 
-    label = rule.mark_text(
+    _label = _rule.mark_text(
         x="width",
         dx=4,
         align="left",
@@ -393,7 +353,7 @@ def _(df_long, player_stats):
         )
     )
 
-    attend_chart = (player_attendance + rule + label).properties(title="League Attendance", width=800, height=400)
+    attend_chart = (player_attendance + _rule + _label).properties(title="League Attendance", width=800, height=500)
     return (attend_chart,)
 
 
@@ -488,25 +448,130 @@ def _(df_with_stats, line_chart, relative_chart):
 
 
 @app.cell
-def _(df_with_stats):
-    # Relative performance chart
-    relative_chart = (
-        alt.Chart(df_with_stats)
-        .mark_line(point=True)
+def time_series_plot(date_axis, filtered_df):
+    # Calculate daily averages for all players
+    daily_avg = (
+        filtered_df.group_by("Date")
+        .agg(
+            [
+                pl.mean("Score").round(2).alias("Daily Avg Score"),
+                pl.count("Score").alias("Total Rounds"),
+            ]
+        )
+        .sort("Date")
+    )
+
+    # Calculate cumulative average for each player
+    player_cumulative = filtered_df.sort("Date", descending=False).select(
+        pl.col("Date"),
+        pl.col("PlayerName"),
+        pl.col("Score"),
+        cum_avg=(pl.col("Score").cum_sum() / pl.arange(1, pl.len() + 1)).over("PlayerName"),
+    )
+
+    # Base chart for daily averages
+    daily_avg_bars = (
+        alt.Chart(daily_avg)
+        .mark_bar(opacity=0.7, color="blue", width=25)
         .encode(
-            x=alt.X("Date:T", title="Date"),
+            x=date_axis,
+            y=alt.Y("Daily Avg Score:Q", title="Score (Relative to Par)"),
+            tooltip=[
+                "Date:T",
+                alt.Tooltip("Daily Avg Score:Q", format=".2f", title="Daily Average Score"),
+                "Total Rounds:Q",
+            ],
+        )
+    )
+
+
+    daily_avg_trend = (
+        alt.Chart(daily_avg)
+        .mark_line(
+            opacity=0.5,
+            color="blue",
+        )
+        .encode(
+            x=date_axis,
+            y=alt.Y("Daily Avg Score:Q", title="Score (Relative to Par)"),
+        )
+    )
+
+
+    # Player scores as circles
+    player_scores = (
+        alt.Chart(player_cumulative)
+        .mark_circle(filled=True, opacity=0.4)
+        .encode(
+            x=date_axis,
+            y=alt.Y("Score:Q", title="Score (Relative to Par)"),
+            xOffset="jitter:Q",
+            color="PlayerName:N",
+            tooltip=[
+                "PlayerName:N",
+                "Date:T",
+                "Score:Q",
+                alt.Tooltip("cum_avg:Q", format=".2f", title="Player's Cumulative Average"),
+            ],
+        ).transform_calculate(
+            # Generate uniform jitter
+            jitter='random()'
+        )
+    )
+
+    # Combine all layers
+    line_chart = (
+        (daily_avg_bars + daily_avg_trend + player_scores)
+        .resolve_scale(y="shared")
+        .properties(
+            title=alt.TitleParams(
+                "Player Performance Over Time",
+                subtitle="Blue bars show avg score of all rounds that day (to account for weather conditions), circles show individual scores, line shows trend over time",
+            ),
+            width=800,
+            height=500,
+        )
+    )
+    return (line_chart,)
+
+
+@app.cell
+def player_rel_perf_plot(date_axis, df_with_stats):
+    # Relative performance chart
+    yrule = alt.Chart().mark_rule(strokeDash=[12, 6], size=2).encode(y=alt.datum(0))
+
+    label = yrule.mark_text(
+        x="width", dx=-2, align="right", baseline="bottom", text="Player's Avg."
+    )
+
+    player_performance_over_time = (
+        alt.Chart(df_with_stats)
+        .mark_line(point=True, strokeWidth=2)
+        .encode(
+            x=date_axis,
             y=alt.Y(
                 "Relative Score to Player Avg:Q",
                 title="Performance (Relative to Player Average)",
             ),
             color="PlayerName:N",
-            tooltip=["PlayerName", "Date:T", "Relative Score to Player Avg:Q", "Score:Q", "Avg Score:Q", "Std Dev:Q"],
+            tooltip=[
+                "PlayerName",
+                "Date:T",
+                "Relative Score to Player Avg:Q",
+                "Score:Q",
+                "Avg Score:Q",
+                "Std Dev:Q",
+            ],
         )
-        .properties(
-            title="Performance Relative to Player Average",
-            width=800,
-            height=400,
-        )
+    )
+
+    relative_chart = (player_performance_over_time + yrule + label).properties(
+        title=alt.TitleParams(
+            "Performance Relative to Player Average",
+            subtitle="Each Player's Avg Score is 0. The y-axis shows round scores as difference from each player's average.",
+        ),
+        width=800,
+        height=500,
     )
     return (relative_chart,)
 
@@ -609,7 +674,7 @@ def _(hole_analysis, hole_outcomes_plot):
         title=alt.Title(text='Hole Difficulty', 
         subtitle='Scores relative to Par'),
         width=800,
-        height=400
+        height=500
     )
 
 
@@ -621,11 +686,11 @@ def _(hole_analysis, hole_outcomes_plot):
         hole_outcomes_plot,
         hole_chart,
     ])
-    return (by_hole_stats,)
+    return by_hole_stats, hole_difficulty
 
 
 @app.cell
-def _(hole_analysis):
+def _(hole_analysis, hole_difficulty):
     # Calculate each player's performance on each hole relative to par
     player_hole_performance = hole_analysis.group_by(["PlayerName", "Hole#"]).agg([
         pl.mean("Score_vs_Par").round(2).alias("Avg_Score_vs_Par"),
@@ -656,7 +721,15 @@ def _(hole_analysis):
     ])
 
     # Create heatmap of player performance by hole
-    heatmap_data = player_hole_performance.filter(pl.col("Rounds_Played") >= 1)  # Only holes with data
+    heatmap_data = ( 
+        player_hole_performance
+            .filter(pl.col("Rounds_Played") >= 1)  # Only holes with data
+            .join(
+                hole_difficulty.select("Hole#", "Avg_Score_vs_Par").rename({"Avg_Score_vs_Par":"Hole_Avg_vs_Par"}),
+                how="left", 
+                on="Hole#"
+            )
+    )
 
     player_heatmap = (
         alt.Chart(heatmap_data)
@@ -670,14 +743,15 @@ def _(hole_analysis):
             tooltip=[
                 "PlayerName:N",
                 "Hole#:N",
-                alt.Tooltip("Avg_Score_vs_Par:Q", title="Avg Score vs Par"),
+                alt.Tooltip("Avg_Score_vs_Par:Q", title="Player's Avg Score vs Par"),
+                alt.Tooltip("Hole_Avg_vs_Par:Q", title="Hole's Avg Score vs. Par (all players)"),
                 alt.Tooltip("Rounds_Played:Q", title="Rounds Played")
             ]
         )
         .properties(
             title="Player Performance by Hole (Heatmap)",
             width=800,
-            height=400
+            height=500
         )
     )
 
