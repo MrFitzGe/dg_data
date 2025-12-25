@@ -29,7 +29,7 @@ def upload_data_files():
         multiple=True
     )
     mo.md(f"""
-    ## Upload Data
+    ## Step 1. Upload Data<br>
     Please upload your rounds data to begin.<br> 
     Should be a UDisc CSV export: {csv_file}
     """)
@@ -38,7 +38,7 @@ def upload_data_files():
 
 @app.cell(hide_code=True)
 def read_preproc_data(csv_file):
-    mo.stop(len(csv_file.value) == 0, mo.md("Enter data to analyze"))
+    mo.stop(len(csv_file.value) == 0, mo.md("... upload data to analyze"))
 
     # Process uploaded data
     # Transform the data into long format for time series analysis
@@ -57,12 +57,12 @@ def read_preproc_data(csv_file):
         df_clean = pl.concat(dfs)
     else:
         mo.stop("File upload format not recognized. Please check your .csv file.")
-    
 
-    mo.vstack([
-        mo.md("Data Used"),
+
+    mo.accordion({
+        "Check Data Uploaded":
         mo.ui.dataframe(df_clean)
-    ])
+    })
     return (df_clean,)
 
 
@@ -92,6 +92,17 @@ def clean_data(csv_file, df_clean):
     df_long = df_preprocessed.filter(
             pl.col("Score").is_not_null()
         )
+
+    mo.accordion({
+        "Data Cleaning Steps":
+        mo.md("""
+        The uploaded data above is cleaned and processed before the analysis below. The cleaning steps include:
+        * check for multiple layouts or courses
+        * converts the start datetime and end datetime to separate Date and Round Duration columns
+        * renames the +/- column as 'Score'
+        * counts the number of rounds played for each player in the data ('Attendance')
+        """)
+    })
     return df_long, df_preprocessed
 
 
@@ -116,7 +127,11 @@ def _(df_long):
         value=df_long['LayoutName'].unique(),
     )
 
-    mo.hstack([players, courses, layouts])
+    mo.vstack([
+        mo.md("## Step 2. Select the data to use for analysis:"),
+        mo.hstack([players, courses, layouts])
+    ])
+
     return courses, layouts, players
 
 
@@ -188,32 +203,32 @@ def _(filtered_df):
     df_with_stats = df_with_stats.with_columns(
         [(pl.col("Score") - pl.col("Avg Score")).round(1).alias("Relative Score to Player Avg")]
     )
-
-    mo.vstack([
-        mo.md("## Highlighted Player Data & Stats"),
-        df_with_stats.select(~cs.starts_with("Hole"))
-    ])
     return df_with_stats, player_stats
 
 
 @app.cell
 def _(
     by_hole_stats,
+    df_with_stats,
     perf_over_time_plots,
     player_stats_by_hole,
     score_attend_plots,
 ):
     tabs = mo.ui.tabs({
+        "Data": mo.vstack([
+        mo.md("## <br>Selected Player Data & Stats<br>"),
+        df_with_stats.select(~cs.starts_with("Hole"))
+    ]),
         "League Ranks: Score & Attendance": score_attend_plots,
-        "Player Performance over Time": perf_over_time_plots,
+        "Performance over Time": perf_over_time_plots,
         "Hole-by-Hole Analysis": mo.vstack([by_hole_stats, mo.md("-------------"), player_stats_by_hole])
     })
 
     mo.vstack([
         mo.md("""
-        ## Analysis
+        ## Step 3. Analysis
+        Click the tabs below for different stats and analyses
         <br>
-        Click the tabs below for different stats
         <br>
         """), 
         tabs
@@ -404,14 +419,18 @@ def _(hole_analysis):
 def _(attend_chart, avg_score_bars, filtered_df, player_hole_outcomes_plot):
     score_attend_plots = mo.vstack([
         mo.md("""
-        ## Score & Attendance
+        ## <br>Score & Attendance
 
         * Best round so far:
         """),
         filtered_df.filter(pl.col("Score") == pl.col("Score").min()).select("PlayerName", "Score", "RoundRating", "Date"), 
-        mo.md(f"<br>* Average round rating: {round(filtered_df["RoundRating"].mean())} <br>"),
+        mo.md(f"""<br>
+        * Average round rating: {round(filtered_df["RoundRating"].mean())} 
+        <br>"""),
         mo.md("""
-        <br>* Most attendance so far: <br>
+        <br> 
+        * Most attendance so far: 
+        <br>
         """),
         filtered_df.filter(pl.col("Attendance") == pl.col("Attendance").max()).select("PlayerName", "Attendance").unique(),
         mo.md(f"<br>* Average round duration: {round(filtered_df["Round Duration (min)"].mean())}  minutes"),
@@ -428,7 +447,7 @@ def _(attend_chart, avg_score_bars, filtered_df, player_hole_outcomes_plot):
 def _(df_with_stats, line_chart, relative_chart):
     perf_over_time_plots = mo.vstack([
         mo.md("""
-        ## Performance Over Time
+        ## <br>Performance Over Time
         Track how players performed in each round.
 
         * Most improved so far:  
@@ -680,7 +699,7 @@ def _(hole_analysis, hole_outcomes_plot):
 
     # Output
     by_hole_stats = mo.vstack([
-        mo.md("## Hole Difficulty Analysis"),
+        mo.md("## <br>Hole Difficulty Analysis"),
         hole_difficulty,
         mo.md("### Graphs"), 
         hole_outcomes_plot,
@@ -756,7 +775,7 @@ def _(hole_analysis, hole_difficulty):
     )
 
     player_stats_by_hole = mo.vstack([
-        mo.md("## Each Player's Best & Nemesis Holes"),
+        mo.md("## <br>Each Player's Best & Nemesis Holes"),
         player_extremes,
         mo.md("### Graphs"),
         player_heatmap      
