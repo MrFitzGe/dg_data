@@ -1,3 +1,15 @@
+# /// script
+# dependencies = [
+#   "marimo",
+#   "polars",
+#   "altair",
+#   "numpy",
+# ]
+# [tool.marimo.display]
+# theme = "dark"
+# ///
+
+
 import marimo
 
 __generated_with = "0.18.4"
